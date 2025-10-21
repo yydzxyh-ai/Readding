@@ -1,0 +1,13 @@
+# Example file for paper identifiers
+# One identifier per line
+# Supports arXiv IDs and DOIs
+
+# arXiv papers
+1912.07753
+2001.00001v1
+arXiv:2101.00001
+
+# DOI papers
+10.1038/nature12373
+10.1126/science.1234567
+https://doi.org/10.1000/182

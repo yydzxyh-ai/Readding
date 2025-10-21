@@ -1,0 +1,21 @@
+{
+  "slack": [
+    {
+      "webhook_url": "https://hooks.slack.com/services/YOUR/SLACK/WEBHOOK",
+      "channel": "#research-digest"
+    }
+  ],
+  "email": [
+    {
+      "smtp_server": "smtp.gmail.com",
+      "smtp_port": 587,
+      "username": "your-email@gmail.com",
+      "password": "your-app-password",
+      "from_email": "your-email@gmail.com",
+      "to_emails": [
+        "recipient1@example.com",
+        "recipient2@example.com"
+      ]
+    }
+  ]
+}

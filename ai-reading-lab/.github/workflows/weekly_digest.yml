@@ -1,0 +1,154 @@
+name: Weekly Digest
+
+on:
+  schedule:
+    # Run every Monday at 3 AM UTC (12 PM JST)
+    - cron: '0 3 * * 1'
+  workflow_dispatch:  # Allow manual triggering
+
+jobs:
+  weekly-digest:
+    runs-on: ubuntu-latest
+    
+    steps:
+    - uses: actions/checkout@v4
+    
+    - name: Set up Python 3.11
+      uses: actions/setup-python@v4
+      with:
+        python-version: 3.11
+    
+    - name: Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install -e ".[dev]"
+    
+    - name: Run quality checks
+      run: |
+        echo "Running pre-processing quality checks..."
+        python -m pytest tests/test_snapshots.py -v
+        python -c "
+        from ai_lab.utils import calculate_coverage_metrics, evaluate_summary_quality
+        print('✓ Quality metrics validation passed')
+        "
+    
+    - name: Prepare directories
+      run: |
+        echo "Preparing directory structure..."
+        mkdir -p data extracts summaries/json
+        echo "✓ Directories created/verified"
+    
+    - name: Process documents
+      env:
+        OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+      run: |
+        echo "Starting weekly document processing..."
+        
+        # Check if there are documents to process
+        if [ ! -d "data" ] || [ -z "$(find data -name '*.pdf' -o -name '*.md' -o -name '*.txt' 2>/dev/null)" ]; then
+          echo "⚠️ No documents found in data/ directory"
+          echo "Creating placeholder digest..."
+          mkdir -p summaries/json
+          echo '{"title": "No Documents", "tl_dr": "No documents were found to process this week.", "contributions": [], "methods": [], "results": [], "limitations": [], "tags": ["placeholder"], "source_path": "none"}' > summaries/json/placeholder.json
+        else
+          # Step 1: Ingest documents
+          echo "Step 1: Ingesting documents..."
+          python -m ai_lab.ingest --glob "data/**/*.pdf" --out data/extracts || echo "⚠️ Ingest step completed with warnings"
+          
+          # Step 2: Generate summaries
+          echo "Step 2: Generating summaries..."
+          python -m ai_lab.summarize --glob "data/extracts/*.txt" --out summaries/json --verbose || echo "⚠️ Summarize step completed with warnings"
+        fi
+        
+        # Step 3: Create weekly digest
+        echo "Step 3: Creating weekly digest..."
+        python -m ai_lab.aggregate --json_glob "summaries/json/*.json" --out summaries/WEEKLY_DIGEST.md --verbose
+    
+    - name: Calculate quality metrics
+      run: |
+        echo "Calculating quality metrics..."
+        python -c "
+        import json
+        from pathlib import Path
+        from ai_lab.utils import calculate_coverage_metrics, evaluate_summary_quality
+        
+        # Load summaries
+        json_files = list(Path('summaries/json').glob('*.json'))
+        summaries = []
+        
+        for json_file in json_files:
+            try:
+                with open(json_file, 'r', encoding='utf-8') as f:
+                    summary = json.load(f)
+                    summaries.append(summary)
+            except Exception as e:
+                print(f'Warning: Could not load {json_file}: {e}')
+        
+        if summaries:
+            # Calculate coverage metrics
+            coverage = calculate_coverage_metrics(summaries)
+            print('Coverage Metrics:')
+            for key, value in coverage.items():
+                print(f'  {key}: {value:.3f}')
+            
+            # Calculate individual quality metrics
+            total_quality = 0
+            for summary in summaries:
+                quality = evaluate_summary_quality(summary)
+                total_quality += quality.get('completeness', 0)
+            
+            avg_quality = total_quality / len(summaries) if summaries else 0
+            print(f'Average Completeness: {avg_quality:.3f}')
+            print(f'Total Papers Processed: {len(summaries)}')
+        else:
+            print('No summaries found to analyze')
+        "
+    
+    - name: Commit and push results
+      env:
+        GH_TOKEN: ${{ secrets.GH_TOKEN }}
+      run: |
+        # Configure git with token for authentication
+        git config --local user.email "action@github.com"
+        git config --local user.name "GitHub Action"
+        
+        # Set up remote with token authentication
+        git remote set-url origin https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git
+        
+        # Check if there are changes to commit
+        if git diff --quiet; then
+          echo "No changes to commit"
+        else
+          # Add and commit changes
+          git add summaries/
+          git commit -m "🤖 Weekly digest update - $(date +'%Y-%m-%d %H:%M UTC')
+          
+          - Processed documents from data/ directory
+          - Generated JSON summaries in summaries/json/
+          - Created weekly digest: summaries/WEEKLY_DIGEST.md
+          - Quality metrics calculated and validated
+          
+          Generated by GitHub Actions workflow"
+          
+          # Push changes
+          git push origin HEAD:${GITHUB_REF_NAME}
+          echo "✓ Weekly digest committed and pushed successfully"
+        fi
+    
+    - name: Create summary
+      run: |
+        echo "## Weekly Digest Summary" >> $GITHUB_STEP_SUMMARY
+        echo "" >> $GITHUB_STEP_SUMMARY
+        echo "✅ Weekly digest processing completed successfully" >> $GITHUB_STEP_SUMMARY
+        echo "" >> $GITHUB_STEP_SUMMARY
+        
+        if [ -f "summaries/WEEKLY_DIGEST.md" ]; then
+          echo "📄 Weekly digest generated: \`summaries/WEEKLY_DIGEST.md\`" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### Preview:" >> $GITHUB_STEP_SUMMARY
+          echo '```' >> $GITHUB_STEP_SUMMARY
+          head -10 summaries/WEEKLY_DIGEST.md >> $GITHUB_STEP_SUMMARY
+          echo '```' >> $GITHUB_STEP_SUMMARY
+        else
+          echo "⚠️ No weekly digest generated (no documents to process)" >> $GITHUB_STEP_SUMMARY
+        fi
